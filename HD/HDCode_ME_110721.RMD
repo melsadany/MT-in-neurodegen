@@ -1,0 +1,236 @@
+---
+title: "HD Code"
+---
+
+
+```{r}
+# load libraries
+library(ggplot2)
+library(DESeq2)
+library(org.Hs.eg.db)
+```
+
+
+
+#Data retrieval part
+```{r}
+HDData <- read.csv("data/HD_Counts.csv", header=T, check.names=FALSE, row.names=1)
+HDmeta <- read.csv("data/HD_Meta.csv", header=T, check.names = FALSE,  row.names=1)
+```
+
+
+#Check step
+```{r}
+
+### Check that sample names match in both files
+all(colnames(HDData) %in% rownames(HDmeta))
+all(colnames(HDData) == rownames(HDmeta))
+
+```
+
+
+
+#DESeq Object for comparing HD VS. Control
+```{r}
+## Create DESeq2Dataset object
+HDdds <- DESeqDataSetFromMatrix(countData = HDData, colData = HDmeta, design = ~ SampleType)
+#View(counts(HDdds))
+## Run analysis
+HDdds <- DESeq(HDdds)
+```
+
+
+
+```{r}
+print(HDdds)
+
+```
+
+
+
+#generating normalized counts
+```{r}
+HDdds2 <- estimateSizeFactors(HDdds)
+HDnormalized_counts <- counts(HDdds2, normalized=TRUE)
+write.csv(HDnormalized_counts, file="data/HDnormalized_counts.csv")
+
+```
+
+
+#contrast
+```{r}
+## Define contrasts, extract results table, and shrink the log2 fold changes
+
+#Define your disease group first, then your control 
+
+contrast_ <- c("SampleType", "HD", "Control")
+resultsNames(HDdds)
+
+
+res_table <- results(HDdds, contrast=contrast_, alpha = 0.05)
+
+
+```
+
+
+# summary function
+
+```{r}
+## Summarize results
+summary(res_table)
+
+```
+
+#saving results table
+```{r}
+
+write.csv(res_table, file="results/HD_VS._control_res_table.csv")
+
+```
+
+
+
+
+
+#setting thresholds for DEGs
+```{r}
+### Set thresholds
+padj.cutoff <- 0.05
+lfc.cutoff <- 0.6
+
+```
+
+
+#subsetting table for DEGs values only
+```{r}
+HDDEGs <- res_table[which (res_table$padj < padj.cutoff & abs(res_table$log2FoldChange)>lfc.cutoff),]
+
+write.csv(HDDEGs, file="results/HD_VS._control_DEGslfc0.6.csv")
+```
+
+
+
+```{r}
+aggregate_rows <- function(df.in, agg.var){
+  df.in.data <- df.in[-dim(df.in)[2]]
+  df.in.data <- sapply(df.in.data, as.numeric)
+  df.in.agg <- aggregate(df.in.data, list(agg.var), FUN=mean)
+  rownames(df.in.agg) <- df.in.agg$Group.1
+  df.in.agg <- df.in.agg[-1]   
+  return(df.in.agg)
+}
+```
+
+
+#converting ENSG of DEGs to GENE SYMBOL 
+```{r}
+ENSG_to_symbol <- function(df.in){
+  df.ensemble.id <- sapply(rownames(df.in), function(x) strsplit(as.character(x),"\\.")[[1]][1])
+  df.in <- cbind(df.ensemble.id, df.in)
+  mapper <- mapIds(org.Hs.eg.db, keys=df.ensemble.id, keytype="ENSEMBL", column="SYMBOL", multiVals="first")
+  mapper.df <- as.data.frame(mapper)
+  mapper.df <- cbind(df.in$df.ensemble.id, mapper.df)
+  names(mapper.df) <- c("df.ensemble.id", "symbol")
+  df.out <- merge(df.in, mapper.df ,by="df.ensemble.id", all.x=TRUE)
+  df.out <- df.out[-1]
+  df.out <- df.out[ ! is.na(df.out$symbol),]
+  df.out <- aggregate_rows(df.out, agg.var=df.out$symbol)
+  return(df.out)
+}
+
+
+```
+
+#converting and saving DEGs
+```{r}
+HDDEGs_symb <- ENSG_to_symbol(HDDEGs)
+write.csv(HDDEGs_symb, file="results/HD_VS._control_ConvertedDEGslfc0.6.csv")
+
+```
+
+
+
+
+
+#getting nuclear-encoded mitochondrial DEGs only from DEGs list
+```{r}
+#retrieve the list file
+MT_List_file <- read.csv("data/nucleargenes.csv", header=T, check.names=FALSE, row.names=1)
+List_of_genes <- MT_List_file[,1]
+
+
+DF <- List_of_genes [List_of_genes %in% rownames(HDDEGs_symb)]
+MT_DEGs <-as.data.frame(HDDEGs_symb[DF,])
+
+write.csv(DF, file = "results/HD_VS._control_Nuclear_encoded_DEGs_only.csv")
+
+```
+
+
+
+#background genes (the genes that are present in the counts file)
+
+```{r}
+
+tot_genes_list <- rownames(HDnormalized_counts)
+
+
+```
+
+
+#printing boxplot of module mitochondrial DEGs in a pdf
+
+```{r}
+module_file <-  read.csv("data/modulenmHD.csv", header=T, check.names=FALSE, row.names=1)
+gene_list <- module_file$ENSG
+vsd <- vst(HDdds)
+c <- 1
+
+pdf(file="results/HD_VS._control_nucleargenes_with_symbols.pdf", onefile=TRUE, paper="a4", width = 8, height = 11)
+par(mfrow=c(3,3))
+
+for (gene in gene_list){
+  if (gene %in% tot_genes_list){
+    colorslist = c("#0F4291", "#C40B0A")
+    boxplot(t(assays(vsd[gene])[[1]])~vsd$SampleType,
+            range=0, 
+            las=1, 
+            boxwex=.4,
+            at=c(1.0 , 0.0), 
+            xlab=NULL, 
+            ylab=NULL,
+            main=module_file[c,1],
+            col=colorslist)
+    stripchart(t(assays(vsd[gene])[[1]])~vsd$SampleType, 
+               vertical=TRUE, 
+               method='jitter', 
+               add=TRUE, 
+               pch=20, 
+               col="black", 
+               cex=1.0, 
+               at=c(1.0 , 0.0))
+  }
+  c <- c+1
+}
+
+dev.off()
+par(mfrow=c(1,1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

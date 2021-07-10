@@ -1,0 +1,221 @@
+---
+title: "AD Code"
+---
+
+
+```{r}
+# load libraries
+library(ggplot2)
+library(DESeq2)
+```
+
+
+
+#Data retrieval part
+```{r}
+AllADData <- read.csv("data/AD_Counts.csv", header=T, check.names=FALSE, row.names=1)
+AllADmeta <- read.csv("data/AD_Meta.csv", header=T, check.names = FALSE,  row.names=1)
+```
+
+#subsetting AD and Old Controls groups only
+```{r}
+ADmeta <- AllADmeta[(AllADmeta$SampleType2== "AD" | AllADmeta$SampleType2== "Old"),]
+ADData <- AllADData[,colnames(AllADData) %in% rownames(ADmeta)]
+
+
+```
+
+
+#Check step
+```{r}
+
+### Check that sample names match in both files
+all(colnames(ADData) %in% rownames(ADmeta))
+all(colnames(ADData) == rownames(ADmeta))
+
+```
+
+#Saving Counts and meta files of AD and Old
+```{r}
+write.csv(ADData, file="data/AD_and_Old_patients_counts.csv")
+write.csv(ADmeta, file="data/AD_and_Old_patients_metadata.csv")
+
+```
+
+
+
+
+#DESeq Object for comparing AD VS. Old
+```{r}
+## Create DESeq2Dataset object
+ADdds <- DESeqDataSetFromMatrix(countData = ADData, colData = ADmeta, design = ~ SampleType1)
+#View(counts(ADdds))
+## Run analysis
+ADdds <- DESeq(ADdds)
+```
+
+
+
+```{r}
+print(ADdds)
+
+```
+
+
+
+#generating normalized counts
+```{r}
+ADdds2 <- estimateSizeFactors(ADdds)
+ADnormalized_counts <- counts(ADdds2, normalized=TRUE)
+write.csv(ADnormalized_counts, file="data/ADnormalized_counts.csv")
+
+```
+
+
+#contrast
+```{r}
+## Define contrasts, extract results table, and shrink the log2 fold changes
+
+#Define your disease group first, then your control 
+
+contrast_ <- c("SampleType1", "AD", "control")
+resultsNames(ADdds)
+
+
+res_table <- results(ADdds, contrast=contrast_, alpha = 0.05)
+
+
+```
+
+
+# summary function
+
+```{r}
+## Summarize results
+summary(res_table)
+
+```
+
+#saving results table
+```{r}
+
+write.csv(res_table, file="results/AD_VS._Old_res_table.csv")
+
+
+
+```
+
+
+
+
+
+#setting thresholds for DEGs
+```{r}
+### Set thresholds
+padj.cutoff <- 0.05
+lfc.cutoff <- 0.6
+
+```
+
+
+#subsetting table for DEGs values only
+```{r}
+ADDEGs <- res_table[which (res_table$padj < padj.cutoff & abs(res_table$log2FoldChange)>lfc.cutoff),]
+
+
+write.csv(ADDEGs, file="results/AD_VS._Old_DEGslfc0.6.csv")
+```
+
+
+
+
+
+#getting nuclear-encoded mitochondrial DEGs only from DEGs list
+```{r}
+#retrieve the genes list file
+MT_List_file <- read.csv("data/nucleargenes.csv", header=T, check.names=FALSE, row.names=1)
+List_of_genes <- MT_List_file[,1]
+
+
+
+DF <- List_of_genes [List_of_genes %in% rownames(ADDEGs)]
+MT_DEGs <-as.data.frame(ADDEGs[DF,])
+
+
+write.csv(MT_DEGs, file = "results/AD_VS._Old_Nuclear_encoded_DEGs_only.csv")
+
+```
+
+
+
+
+
+
+
+#background genes (the genes that are present in the counts file)
+
+```{r}
+
+tot_genes_list <- rownames(ADnormalized_counts)
+
+
+```
+
+
+#printing boxplot of module mitochondrial DEGs in a pdf
+
+```{r}
+#reading the list of genes 
+module_file <-  read.csv("data/modulenmAD.csv", header=T, check.names=FALSE, row.names=1)
+gene_list <- module_file$gene
+
+#variance stabilizing transformation of the data
+vsd <- vst(ADdds)
+
+pdf(file="results/AD_VS._Old_nucleargenes_boxplot.pdf", onefile=TRUE, paper="a4", width = 8, height = 11)
+par(mfrow=c(3,3))
+
+
+for (gene in gene_list){
+  if (gene %in% tot_genes_list){
+    colorslist = c("#C40B0A", "#0F4291")
+    boxplot(t(assays(vsd[gene])[[1]])~vsd$SampleType1,
+            range=0, 
+            las=1, 
+            boxwex=.4,
+            at=c(0.0 ,0.5), 
+            xlab=NULL, 
+            ylab=NULL,
+            main=gene,
+            col=colorslist)
+    stripchart(t(assays(vsd[gene])[[1]])~vsd$SampleType1,
+               vertical=TRUE, 
+               method='jitter', 
+               add=TRUE, 
+               pch=20, 
+               col="black", 
+               cex=1.0, 
+               at=c(0.0 ,0.5))
+  }
+}
+dev.off()
+par(mfrow=c(1,1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
