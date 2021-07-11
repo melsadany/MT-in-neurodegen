@@ -1,0 +1,74 @@
+setwd("D:/FRDA_")
+targetinfo <- readTargets('child_target.txt', sep = '\t')
+setwd("D:/FRDA_/sample files")
+project <- read.maimages(targetinfo, source = 'agilent')
+annotLookup <- read_excel("D:/FRDA_/annot_lookup.xlsx")
+#filter the data 
+annotLookup <- annotLookup[which(annotLookup$SPOT_ID %in% project$genes$ProbeName),]
+annotLookup <- annotLookup[match(project$genes$ProbeName, annotLookup$SPOT_ID),]
+Control <- project$genes$ControlType==1L
+NoSymbol <- is.na(project$genes$GeneName)
+project.filt <- project[!Control & !NoSymbol , ]
+# choose the optimal offset on the fluorescent intensities
+RG16 <- backgroundCorrect(project.filt, method="normexp", offset=16)
+MA.p16 <- normalizeWithinArrays(RG16,method = "loess")
+MA.s16 <- normalizeBetweenArrays(MA.p16,method="scale")
+fit16<-lmFit(MA.s16,design)
+fit16<-eBayes(fit10)
+fit16$df.prio
+#offset50
+RG50 <- backgroundCorrect(project.filt, method="normexp", offset=50)
+MA.p50 <- normalizeWithinArrays(RG50,method = "loess")
+MA.s50 <- normalizeBetweenArrays(MA.p50,method="scale")
+fit50<-lmFit(MA.s50,design)
+fit50<-eBayes(fit50)
+fit50$df.prior
+#offset25
+RG25 <- backgroundCorrect(project.filt, method="normexp", offset=25)
+MA.p25 <- normalizeWithinArrays(RG25,method = "loess")
+MA.s25 <- normalizeBetweenArrays(MA.p25,method="scale")
+fit25<-lmFit(MA.s25,design)
+fit25<-eBayes(fit25)
+fit25$df.prior
+#offset 10
+RG10 <- backgroundCorrect(project.filt, method="normexp", offset=10)
+MA.p10 <- normalizeWithinArrays(RG10,method = "loess")
+MA.s10 <- normalizeBetweenArrays(MA.p10,method="scale")
+fit10<-lmFit(MA.s10,design)
+fit10<-eBayes(fit10)
+fit10$df.prio
+#choosing offset 16 as it has the largest df.prior
+project.bgcorrect <- backgroundCorrect(project.filt, method="normexp", offset=16)
+# Normalize the data with the 'loess' method
+project.bgcorrect.norm<-normalizeWithinArrays(project.bgcorrect, method = 'loess')
+project.bgcorrect.norm <- normalizeBetweenArrays(project.bgcorrect, method = 'quantile')
+# For replicate probes in each sample, replace values with the average
+project.bgcorrect.norm.avg <- avereps(
+  project.bgcorrect.norm,
+  ID = project.bgcorrect.norm$genes$ProbeName)
+model  <- factor(rep(c("control","patient"),times=c(10,28)))
+design <- model.matrix(~0 + model)
+
+# Fit the linear model on the study's data
+project.fitmodel <- lmFit(
+  project.bgcorrect.norm.avg,
+  design)
+# Applying the empirical Bayes method to the fitted values
+# Acts as an extra normalisation step and aims to bring the different probe-wise variances to common values
+project.fitmodel.eBayes <- eBayes(project.fitmodel)
+names(project.fitmodel.eBayes)
+# Make individual contrasts
+CaseControl <- makeContrasts(CaseControl = 'modelpatient-modelcontrol', levels = design)
+CaseControl.fitmodel <- contrasts.fit(project.fitmodel.eBayes, CaseControl)
+CaseControl.fitmodel.eBayes <- eBayes(CaseControl.fitmodel)
+#extracting Differeinlt expressed genes 
+tT<- topTable(
+  CaseControl.fitmodel.eBayes,
+  adjust = 'BH',
+  coef = "CaseControl",
+  number = Inf,
+  p.value = 0.05)
+#extract NMT degs
+nucl_ = subset(tT,GeneName %in% nm_genes$Symbol)
+res2.up16 <- nucl_[ nucl_$adj.P.Val<0.05 & abs(nucl_$logFC>= 0.6), ]
+res2.dn16 <- nucl_[ nucl_$adj.P.Val<0.05 & nucl_$logFC<= -0.6, ]
