@@ -1,0 +1,109 @@
+nm_data<-data%>%filter(data$gene%in%nm_genes$Symbol)
+log_dat<-log2(nm_data[,-1]+1)
+input_mat<-t(as.data.frame(log_dat))
+input_mat<-as.data.frame(input_mat)
+names(input_mat)<-nm_data$gene
+library(WGCNA)
+allowWGCNAThreads()
+library(flashClust)
+# allow multi#-threading (optional)
+#Filter samples and genes with too many missing entries
+gsg = goodSamplesGenes(input_mat, verbose = 3)
+gsg$allOK
+# Choose a set of soft-thresholding powers
+powers = c(c(1:10), seq(from = 12, to = 20, by = 2))
+par(mfrow = c(1,2));
+cex1 = 0.9;
+
+plot(sft$fitIndices[, 1],
+     -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
+     xlab = "Soft Threshold (power)",
+     ylab = "Scale Free Topology Model Fit, signed R^2",
+     main = paste("Scale independence")
+)
+text(sft$fitIndices[, 1],
+     -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
+     labels = powers, cex = cex1, col = "red"
+)
+abline(h = 0.90, col = "red")
+plot(sft$fitIndices[, 1],
+     sft$fitIndices[, 5],
+     xlab = "Soft Threshold (power)",
+     ylab = "Mean Connectivity",
+     type = "n",
+     main = paste("Mean connectivity")
+)
+text(sft$fitIndices[, 1],
+     sft$fitIndices[, 5],
+     labels = powers,
+     cex = cex1, col = "red")
+picked_power = 6
+#run WGCNA 
+netwk <- blockwiseModules(input_mat,                # <= input here
+                          
+                          # == Adjacency Function ==
+                          power = picked_power,                # <= power here
+                          networkType = "signed",
+                          
+                          # == Tree and Block Options ==
+                          deepSplit = 2,
+                          pamRespectsDendro = F,
+                          #detectCutHeight = 0.75,
+                          minModuleSize = 30,
+                          maxBlockSize = 4000,
+                          
+                          # == Module Adjustments ==
+                          reassignThreshold = 0,
+                          mergeCutHeight = 0.25,
+                          
+                          # == TOM == Archive the run results in TOM file (saves time)
+                          saveTOMs = T,
+                          saveTOMFileBase = "ER",
+                          
+                          # == Output Options
+                          numericLabels = T,
+                          verbose = 3)
+#take a look at the modules, there
+# Convert labels to colors for plotting
+mergedColors = labels2colors(netwk$colors)
+# Plot the dendrogram and the module colors underneath
+plotDendroAndColors(
+  netwk$dendrograms[[1]],
+  mergedColors[netwk$blockGenes[[1]]],
+  "Module colors",
+  dendroLabels = FALSE,
+  hang = 0.03,
+  addGuide = TRUE,
+  guideHang = 0.05 )
+#Relate Module (cluster) Assignments to The two group Groups
+module_df <- data.frame(
+  gene_id = names(netwk$colors),
+  colors = labels2colors(netwk$colors)
+)
+# Get Module Eigengenes per cluster
+nGenes = ncol(input_mat);
+nSamples = nrow(input_mat);
+MEs0 = moduleEigengenes(input_mat, mergedColors)$eigengenes
+MEs = orderMEs(MEs0)
+moduleTraitCor = cor(MEs, trait_data, use = "p");
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples);
+textMatrix =  signif(moduleTraitCor, 2)
+textMatrix = formatC(moduleTraitCor, digits = 2, format = "f")
+
+dim(textMatrix) = dim(moduleTraitCor)
+
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = names(trait_data),
+               yLabels = names(MEs),
+               ySymbols = NULL,
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(-1,1), 
+               main = paste("Gene Expression Module- Trait relationships"), ylab = "Gene Expression-Based Modules")
+                          
+           
+                        
