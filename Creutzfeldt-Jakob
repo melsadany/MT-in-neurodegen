@@ -1,0 +1,54 @@
+library(GEOquery)
+library(limma)
+library(umap)
+library(Biobase)
+library(dplyr)
+library(pheatmap)
+library(readxl)
+#download the datafrom GEO
+gset <- getGEO("GSE124571", GSEMatrix =TRUE, AnnotGPL=FALSE)
+#specify the platform used
+if (length(gset) > 1) idx <- grep("GPL14951", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+samples <- as.character(pData(gset)[, "title"]) 
+samples[21]<-"sCJD_2"
+sites <- as.numeric(substr(samples , 6, 6))
+
+### exprs get the expression levels as a data frame and get the distribution
+summary(exprs(gset))
+#we clearly see that the values go beyond 16, so we will need to perform a log2 transformation. 
+exprs(gset) <- log2(exprs(gset))
+boxplot(exprs(gset), col = sites + 1, names =samples , las = 2, cex.names = 0.5, ylab = expression(log[2](intensity)),  outline = FALSE , ylim = c(3, 10), main = "before normalization")
+#filter na from data
+annot <- fData(gset)
+anno_filtered <- subset(annot, !is.na(ID))
+# filter expression data
+ex <- exprs(gset)
+ex <- as.data.frame(ex)
+ex_ <- ex %>% filter(row.names(ex) %in% anno_filtered$ID)
+ex_filterd<-as.matrix(ex_)
+#aggregate the data by transcript ID
+ex_aggregated = aggregate(ex_filterd~ anno_filtered$Transcript, FUN='mean')
+flitered_ex <- ex_aggregated[,-1]
+rownames(flitered_ex) <- ex_aggregated[,1]
+#average replicates
+Id<- colnames(ex)
+Id[21]<-"GSM3536981"
+cleaned_ex <- avearrays(flitered_ex,ID=Id)
+# DEsign the matrix 
+model  <- factor(rep(c("control","patient"),times=c(10,10)))
+design <- model.matrix(~0 + model)
+fit <- lmFit( as.matrix(cleaned_ex), design)
+contrasts <- makeContrasts(modelpatient - modelcontrol, levels=design)
+fit2 <- contrasts.fit(fit, contrasts)
+fit2 <- eBayes(fit2)
+tT<- topTable(fit2, adjust="fdr", number=Inf,p.value=0.05 )
+DEgs_symbols<- anno_filtered%>%filter(Transcript %in%rownames(tT))
+annot_Degs <- DEgs_symbols%>% distinct(Transcript,ILMN_Gene,Entrez_Gene_ID)
+all_degs <- cbind(annot_Degs,tT)
+#NMT DEGS
+nm_genes <- read_excel("F:/microarray result/nm_genes.xlsx")
+View(nm_genes)
+nucl_ = subset(all_degs,ILMN_Gene %in% nm_genes$Symbol)
+res2.a <- nucl_[ nucl_$adj.P.Val<0.05 & abs(nucl_$logFC>= 0.6), ]
+res2.d <- nucl_[ nucl_$adj.P.Val<0.05 & nucl_$logFC<= -0.6, ]
