@@ -1,0 +1,212 @@
+
+Installing packages 
+
+```{r}
+ipak <- function(pkg){
+new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+if (length(new.pkg)) 
+    install.packages(new.pkg, dependencies = TRUE)
+sapply(pkg, require, character.only = TRUE)
+}
+```
+
+```{r}
+packages = c("tidyverse", "RColorBrewer","pheatmap", "DESeq2","ggplot2","lubridate", "tidyr","stringr","limma","calibrate")
+ipak(packages)
+```
+
+Reading the count data 
+
+```{r}
+## create a path containing all the files 
+
+datapath <- file.path( "C:", "Users", "alaas","OneDrive", "Desktop", "GP", "GEO","ALS1","GSE124439_RAW")
+
+file_names = list.files(datapath, pattern= "GSM", full.names= TRUE)
+
+## create a path for only the first file to initiate the dataframe to read the genes column only
+
+firstpath <- file.path( "C:", "Users", "alaas","OneDrive", "Desktop", "GP", "GEO","ALS1","GSE124439_RAW", "GSM3533230_CGND-HRA-00013_counts.txt")
+
+## initiate the dataframe and fill it with the count values only
+
+ALScount <- read.csv(firstpath, header = FALSE , sep = "\t",stringsAsFactors = FALSE, row.names = 1)
+
+## read all the gene counts
+cols <- c()
+  
+  
+for (f in file_names) {
+   pattern <- strsplit(f,"_")[[1]]
+   cols <- c(cols,pattern[3])
+   # print(pattern[3])
+   dat <- read.csv(f, header=FALSE, sep="\t", stringsAsFactors = FALSE)[,2]
+   ALScount <- cbind(ALScount, dat)
+   
+}
+
+## to remove the first row in the files (contains the header)
+ALScount <- ALScount[-c(1),]
+ALScount[,1] <- NULL
+
+colnames(ALScount) <- cols
+ALScount <- ALScount [1:27961,]
+
+
+ALScount <- data.frame(genes=row.names(ALScount),ALScount)
+ALScount$genes <- NULL
+ALScount
+
+
+```
+
+
+Reading metadata 
+
+```{r}
+metapath <- file.path( "C:", "Users", "alaas","OneDrive", "Desktop", "GP", "GEO","ALS1","metadata.csv")
+
+ALSmeta <- read.csv(metapath, header=T, sep=",",stringsAsFactors = FALSE)
+ALSmeta[,1] <- gsub("-",".", ALSmeta[,1])
+ALSmeta <- ALSmeta[order(ALSmeta$RNA.seq.ID),]
+rownames(ALSmeta) <- NULL
+
+ALSmeta
+
+```
+
+
+Filtering both datasets 
+
+```{r}
+ALSmeta<- ALSmeta[ALSmeta$Subject.Group == "ALS Spectrum MND" | ALSmeta$Subject.Group == "Non-Neurological Control",]
+# renaming subject group
+ALSmeta$Subject.Group[ALSmeta$Subject.Group == "ALS Spectrum MND"] <- "ALS"
+ALSmeta$Subject.Group[ALSmeta$Subject.Group == "Non-Neurological Control"] <- "Control"
+
+ALScount <- ALScount[,colnames(ALScount) %in% ALSmeta$RNA.seq.ID]
+```
+
+
+```{r}
+
+mat.ALScount <- as.matrix(sapply(ALScount, as.integer))
+row.names(mat.ALScount) <- row.names(ALScount)
+
+#mat.ALScount
+```
+
+Checking before creating the dds
+
+```{r}
+is.numeric(mat.ALScount)
+all(ALSmeta$RNA.seq.ID %in% colnames(mat.ALScount))
+ncol(mat.ALScount) == nrow(ALSmeta)
+```
+
+
+
+DEseq2 object
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData=mat.ALScount,
+                              colData=ALSmeta,
+                              design=~Tissue+Subject.Group)
+```
+
+```{r}
+dds <- DESeq(dds)
+```
+save reads to the file
+
+```{r}
+saveRDS(dds, file="RDS/dds.rds")
+```
+read the reads from the file
+
+```{r}
+dds <- readRDS("RDS/dds.rds")
+```
+
+
+Genes of interest (NEM genes)
+
+
+```{r}
+allgenes <- (read_csv("genes.csv"))
+geneslist <- allgenes$SYMBOL
+#geneslist
+```
+
+
+Extract results with adjusted p-value < 0.05 and lfc > 0.6
+
+```{r}
+res06 <- results(dds, contrast = c("Subject.Group","ALS","Control"), alpha=0.05)
+res06_degs <- res06[ which (res06$padj < 0.05 & abs(res06$log2FoldChange)> 0.6),]
+write.csv(as.data.frame(res06_degs), file="Results/all_ALS_degs_lfc06.csv")
+summary(res06_degs)
+```
+
+```{r}
+goi06 <- geneslist
+goi06 <- goi06 [goi06 %in% rownames(res06_degs)]
+write.csv(res06_degs[goi06,], file = "Results/ALS_mt_degs_lfc06.csv")
+goi06
+```
+
+Normalizing data reads for plotting
+
+```{r}
+dds.vst <- varianceStabilizingTransformation(dds, blind =T)
+dds.vst
+```
+
+Saving the normalized reads and reading them
+
+```{r}
+saveRDS(dds.vst, file = "RDS/dds.vst.rds")
+```
+
+```{r}
+dds.vst <- readRDS("RDS/dds.vst.rds")
+```
+
+
+Boxplots
+
+
+```{r}
+
+#gene_list <- c("CRYAB", "PLA2G4B", "PLIN5", "NAGS", "CPT1B")
+
+gene_list <- c("CRYAB")
+pdf(file="ALS_Boxplots.pdf", onefile=TRUE, paper="a4", width = 8, height = 11)
+par(mfrow=c(3,3))
+
+for (gene in gene_list){
+  if (gene %in% goi06){
+    colorslist = c("#c40b0a", "#0f4291")
+    boxplot(t(assays(dds.vst[gene])[[1]])~dds.vst$Subject.Group,
+            range=0, 
+            las=1, 
+            boxwex=.4,
+            at=c(0.0 , 1.0),
+            xlab=NULL, 
+            ylab=NULL, 
+            main=gene,
+            col=colorslist)
+    stripchart(t(assays(dds.vst[gene])[[1]])~dds.vst$Subject.Group, 
+               vertical=TRUE, 
+               method='jitter', 
+               add=TRUE, 
+               pch=20, 
+               col="black", 
+               cex=1.0, 
+               at=c(0.0 , 1.0))
+  }
+}
+dev.off()
+par(mfrow=c(1,1))
+```
+
