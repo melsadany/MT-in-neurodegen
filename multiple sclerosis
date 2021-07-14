@@ -9,7 +9,7 @@ library(lumi)
 #downlload the datafrom GEO
 gset <- getGEO("GSE135511", GSEMatrix =TRUE, AnnotGPL=FALSE)
 #specify the platform used
-if (length(gset) > 1) idx <- grep("GPL14951", attr(gset, "names")) else idx <- 1
+if (length(gset) > 1) idx <- grep("GPL6883", attr(gset, "names")) else idx <- 1
 gset <- gset[[idx]]
 samples <- as.character(pData(gset)[, "title"])
 ### exprs get the expression levels as a data frame and get the distribution
@@ -28,7 +28,7 @@ anno_filtered<- anno_filtered%>%filter(anno_filtered$ID%in%rownames(ex))
 ex_ <- ex %>% filter(row.names(ex) %in% anno_filtered$ID)
 ex_filterd<-as.matrix(ex_)
 #aggregate the data by transcript ID
-ex_aggregated = aggregate(ex_filterd~ anno_filtered$Transcript, FUN='mean')
+ex_aggregated = aggregate(ex_filterd~ anno_filtered$ILMN_Gene, FUN='mean')
 flitered_ex <- ex_aggregated[,-1]
 rownames(flitered_ex) <- ex_aggregated[,1]
 # DEsign the matrix 
@@ -42,10 +42,7 @@ tT<- topTable(fit2, adjust="fdr", number=Inf,p.value=0.05 )
 #NMT annotation
 nm_genes <- read_excel("F:/microarray result/nm_genes.xlsx")
 View(nm_genes)
-DEgs_symbols<- anno_filtered%>%filter(Transcript %in%rownames(tT))
-annot_Degs <- DEgs_symbols%>% distinct(Transcript,ILMN_Gene,Entrez_Gene_ID)
-all_degs <- cbind(annot_Degs,tT)
 #NMT DEGS
-nucl_ = subset(all_degs,ILMN_Gene %in% nm_genes$Symbol)
+nucl_ = subset(tT,rownames(tT) %in% nm_genes$Symbol)
 res2.a <- nucl_[ nucl_$adj.P.Val<0.05 & abs(nucl_$logFC>= 0.6), ]
 res2.d <- nucl_[ nucl_$adj.P.Val<0.05 & nucl_$logFC<= -0.6, ]
