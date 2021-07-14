@@ -1,0 +1,282 @@
+
+Installing packages 
+
+```{r}
+ipak <- function(pkg){
+new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+if (length(new.pkg)) 
+    install.packages(new.pkg, dependencies = TRUE)
+sapply(pkg, require, character.only = TRUE)
+}
+```
+
+```{r}
+packages = c("tidyverse", "RColorBrewer","pheatmap", "DESeq2","ggplot2","lubridate", "tidyr","stringr","org.Hs.eg.db")
+ipak(packages)
+```
+
+
+Convert ensemble id to gene symbol 
+
+```{r}
+library(org.Hs.eg.db)
+ENSG_to_symbol <- function(df.in){
+  df.ensemble.id <- sapply(rownames(df.in), function(x) strsplit(as.character(x),"\\.")[[1]][1])
+  df.in <- cbind(df.ensemble.id, df.in)
+  mapper <- mapIds(org.Hs.eg.db, keys=df.ensemble.id, keytype="ENSEMBL", column="SYMBOL", multiVals="first")
+  mapper.df <- as.data.frame(mapper)
+  mapper.df <- cbind(df.in$df.ensemble.id, mapper.df)
+  names(mapper.df) <- c("df.ensemble.id", "symbol")
+  df.out <- merge(df.in, mapper.df ,by="df.ensemble.id", all.x=TRUE)
+  df.out <- df.out[-1]
+  df.out <- df.out[ ! is.na(df.out$symbol),]
+  df.out <- aggregate_rows(df.out, agg.var=df.out$symbol)
+  return(df.out)
+}
+```
+
+```{r}
+aggregate_rows <- function(df.in, agg.var){
+  df.in.data <- df.in[-dim(df.in)[2]]
+  df.in.data <- sapply(df.in.data, as.numeric)
+  df.in.agg <- aggregate(df.in.data, list(agg.var), FUN=mean)
+  rownames(df.in.agg) <- df.in.agg$Group.1
+  df.in.agg <- df.in.agg[-1]   ### This is our final DF
+  return(df.in.agg)
+}
+```
+
+
+Reading count data 
+
+```{r}
+
+datapath <- file.path("GSE153960.csv")
+
+countData <- read.table(datapath, header = F , sep = ",",stringsAsFactors = F, row.names = 2)
+countData <- countData[,-c(1)]
+cnames <- countData[1,]
+countData <- countData[-c(1),]
+colnames(countData) <- cnames
+head(countData)
+#dim(countData)
+
+```
+
+
+Reading metadata 
+
+```{r}
+metapath <- file.path("metadata.csv")
+metaData <- read.table(metapath, header=T, sep=",",stringsAsFactors = FALSE,row.names = 1)
+metaData <- metaData[-c(1660),]
+metaData
+
+```
+
+
+Filtering FTLD-TDP only 
+
+```{r}
+meta_FTLD <- metaData[(metaData$disease_group== "FTLD-TDP" | metaData$disease_group== "Control") & (metaData$tissue == "Frontal Cortex" | metaData$tissue == "Temporal Cortex") & (metaData$sequencing_platform == "NovaSeq") ,]
+meta_FTLD <- na.omit(meta_FTLD)
+meta_FTLD <- meta_FTLD[order(rownames(meta_FTLD)),]
+meta_FTLD
+
+```
+
+```{r}
+count_FTLD <- countData[,colnames(countData) %in% rownames(meta_FTLD)]
+count_FTLD <- count_FTLD[,order(colnames(count_FTLD))]
+meta_FTLD <-meta_FTLD[(rownames(meta_FTLD) %in% colnames(count_FTLD)),]
+count_FTLD
+```
+
+```{r}
+mat.count_FTLD <- data.frame(count_FTLD, row.names = NULL)
+mat.count_FTLD <- as.matrix(sapply(mat.count_FTLD, as.integer))
+row.names(mat.count_FTLD) <- row.names(count_FTLD)
+colnames(mat.count_FTLD) <- colnames(count_FTLD)
+#mat.count_FTLD
+```
+
+Checking before creating the dds 
+
+```{r}
+is.numeric(mat.count_FTLD)
+ncol(mat.count_FTLD) == nrow(meta_FTLD)
+all(rownames(meta_FTLD) == colnames(mat.count_FTLD))
+```
+
+DEseq2 object
+
+```{r}
+FTLD_dds <- DESeqDataSetFromMatrix(countData = mat.count_FTLD, colData =meta_FTLD, design = ~disease_group+tissue)
+```
+
+
+```{r}
+FTLD_dds_run <- DESeq(FTLD_dds)
+```
+```{r}
+FTLD_dds
+```
+
+Saving and reading the dds
+
+```{r}
+saveRDS(FTLD_dds_run, file = "RDS/FTLD_dds_run.rds")
+```
+
+```{r}
+FTLD_dds_run <- readRDS("RDS/FTLD_dds_run.rds")
+```
+
+Normalizing data reads for plotting
+
+```{r}
+FTLD_vst <- varianceStabilizingTransformation(FTLD_dds_run, blind= TRUE)
+```
+
+Saving and reading the vst 
+
+```{r}
+saveRDS(FTLD_vst, file="RDS/FTLD_VST.rds")
+```
+
+```{r}
+FTLD_vst <- readRDS("RDS/FTLD_VST.rds")
+```
+
+Genes of interest (NEM genes)
+
+```{r}
+allgenes <- (read_csv("genes.csv"))[,c(1,2,3,4)]
+geneslist <- allgenes$SYMBOL
+#geneslist
+```
+
+
+Extract results with adjusted p-value < 0.05 and default lfc (0)
+
+```{r}
+FTLD_res0 <- results(FTLD_dds_run, contrast = c("disease_group","FTLD-TDP","Control"), alpha = 0.05)
+summary(FTLD_res0)
+```
+```{r}
+
+FTLD_degs0 <- FTLD_res0[which (FTLD_res0$padj < 0.05),]
+write.csv(as.data.frame(FTLD_degs0), file="Results/all_FTLD_degs_lfc0.csv")
+summary(FTLD_degs0)
+#FTLD_degs0
+```
+
+Converting results from ensemble id to symbol
+
+```{r}
+FTLD_degs0_sym <- ENSG_to_symbol(FTLD_degs0)
+write.csv(as.data.frame(FTLD_degs0_sym), file="Results/all_FTLD_degs_lfc0_sym.csv")
+FTLD_degs0_sym
+```
+
+
+```{r}
+goi0 <- geneslist
+goi0 <- goi0 [goi0 %in% rownames(FTLD_degs0_sym)]
+write.csv(FTLD_degs0_sym[goi0,], file = "Results/FTLD_mt_degs_lfc0_sym.csv")
+goi0
+```
+
+Extract results with adjusted p-value < 0.05 and default lfc > 0.6
+
+```{r}
+FTLD_res06 <- results(FTLD_dds_run, contrast = c("disease_group","FTLD-TDP","Control"), alpha = 0.05 , cooksCutoff = T, independentFiltering = F )
+summary(FTLD_res06)
+```
+
+```{r}
+FTLD_degs06 <- FTLD_res06[which (FTLD_res06$padj < 0.05 & abs(FTLD_res06$log2FoldChange)>0.6),]
+write.csv(as.data.frame(FTLD_degs06), file="Results/all_FTLD_degs_lfc06.csv")
+summary(FTLD_degs06)
+```
+
+Converting results from ensemble id to symbol
+
+```{r}
+FTLD_degs06_sym <- ENSG_to_symbol(FTLD_degs06)
+write.csv(as.data.frame(FTLD_degs06_sym), file="Results/all_FTLD_degs_lfc06_sym.csv")
+FTLD_degs06_sym
+```
+
+```{r}
+goi06 <- geneslist
+goi06 <- goi06 [goi06 %in% rownames(FTLD_degs06_sym)]
+write.csv(FTLD_degs06_sym[goi06,], file = "Results/FTLD_mt_degs_lfc06_sym_.csv")
+goi06
+
+```
+
+
+Boxplot preparation 
+
+
+```{r}
+df.in <- count_FTLD
+df.ensemble.id <- sapply(rownames(df.in), function(x) strsplit(as.character(x),"\\.")[[1]][1])
+df.in <- cbind(df.ensemble.id, df.in)
+mapper <- mapIds(org.Hs.eg.db, keys=df.ensemble.id, keytype="ENSEMBL", column="SYMBOL", multiVals="first")
+mapper.df <- as.data.frame(mapper)
+mapper.df <- cbind(rownames(df.in),  mapper.df)
+names(mapper.df) <- c("complete.ensemble", "symbol")
+
+
+```
+
+```{r}
+module_genes <- c("MTHFD2","CASP1","HSPA1A","PYCARD","SHOX2")
+ENSG_module_genes <- c()
+for (gene in module_genes){
+  ENSG_module_genes <- c(ENSG_module_genes, mapper.df$complete.ensemble[which(mapper.df$symbol==gene)])
+}
+
+ENSG_module_genes
+```
+
+Boxplots
+
+```{r}
+
+gene_list <- module_genes
+
+pdf(file="FTLD_control.pdf", onefile=TRUE, paper="a4", width = 8, height = 11)
+par(mfrow=c(3,3))
+
+for (gene in gene_list){
+  if (gene %in% goi06){
+    ENSG_gene <- mapper.df$complete.ensemble[which(mapper.df$symbol==gene)]
+    colorslist = c( "#0f4291","#c40b0a")
+    boxplot(t(assays(FTLD_vst[ENSG_gene])[[1]])~FTLD_vst$disease_group,
+            range=0, 
+            las=1, 
+            boxwex=.4,
+            at=c(1.0 , 0.0),
+            xlab=NULL, 
+            ylab=NULL, 
+            main=gene,
+            col=colorslist)
+    stripchart(t(assays(FTLD_vst[ENSG_gene])[[1]])~FTLD_vst$disease_group, 
+               vertical=TRUE, 
+               method='jitter', 
+               add=TRUE, 
+               pch=20, 
+               col="black", 
+               cex=1.0, 
+               at=c(1.0 , 0.0))
+  }
+}
+dev.off()
+par(mfrow=c(1,1))
+```
+
+
+
