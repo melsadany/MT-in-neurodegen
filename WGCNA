@@ -15,6 +15,13 @@ powers = c(c(1:10), seq(from = 12, to = 20, by = 2))
 par(mfrow = c(1,2));
 cex1 = 0.9;
 
+sft = pickSoftThreshold(
+  input_mat,             # <= Input data
+  #blockSize = 30,
+  powerVector = powers,
+  verbose = 5
+  )
+
 plot(sft$fitIndices[, 1],
      -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
      xlab = "Soft Threshold (power)",
