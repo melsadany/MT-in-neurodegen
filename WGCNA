@@ -108,7 +108,7 @@ labeledHeatmap(Matrix = moduleTraitCor,
                colors = blueWhiteRed(50),
                textMatrix = textMatrix,
                setStdMargins = FALSE,
-               cex.text = 0.5,
+               cex.text = 0.7,
                zlim = c(-1,1), 
                main = paste("Gene Expression Module- Trait relationships"), ylab = "Gene Expression-Based Modules")
                           
